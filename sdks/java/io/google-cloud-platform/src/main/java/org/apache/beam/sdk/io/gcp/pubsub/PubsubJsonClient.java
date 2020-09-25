@@ -17,9 +17,11 @@
  */
 package org.apache.beam.sdk.io.gcp.pubsub;
 
+import static org.apache.beam.vendor.guava.v26_0_jre.com.google.common.base.Preconditions.checkArgument;
 import static org.apache.beam.vendor.guava.v26_0_jre.com.google.common.base.Preconditions.checkState;
 
 import com.google.api.client.http.HttpRequestInitializer;
+import com.google.api.client.util.DateTime;
 import com.google.api.services.pubsub.Pubsub;
 import com.google.api.services.pubsub.Pubsub.Builder;
 import com.google.api.services.pubsub.Pubsub.Projects.Subscriptions;
@@ -52,38 +54,43 @@ import org.apache.beam.sdk.extensions.gcp.util.Transport;
 import org.apache.beam.vendor.guava.v26_0_jre.com.google.common.annotations.VisibleForTesting;
 import org.apache.beam.vendor.guava.v26_0_jre.com.google.common.base.Strings;
 import org.apache.beam.vendor.guava.v26_0_jre.com.google.common.collect.ImmutableList;
+import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** A Pubsub client using JSON transport. */
 public class PubsubJsonClient extends PubsubClient {
 
+  private static final Logger log = LoggerFactory.getLogger(PubsubJsonClient.class);
+
   private static class PubsubJsonClientFactory implements PubsubClientFactory {
     private static HttpRequestInitializer chainHttpRequestInitializer(
-        Credentials credential, HttpRequestInitializer httpRequestInitializer) {
+            Credentials credential, HttpRequestInitializer httpRequestInitializer) {
       if (credential == null) {
         return httpRequestInitializer;
       } else {
         return new ChainingHttpRequestInitializer(
-            new HttpCredentialsAdapter(credential), httpRequestInitializer);
+                new HttpCredentialsAdapter(credential), httpRequestInitializer);
       }
     }
 
     @Override
     public PubsubClient newClient(
-        @Nullable String timestampAttribute, @Nullable String idAttribute, PubsubOptions options)
-        throws IOException {
+            @Nullable String timestampAttribute, @Nullable String idAttribute, PubsubOptions options)
+            throws IOException {
       Pubsub pubsub =
-          new Builder(
-                  Transport.getTransport(),
-                  Transport.getJsonFactory(),
-                  chainHttpRequestInitializer(
-                      options.getGcpCredential(),
-                      // Do not log 404. It clutters the output and is possibly even required by the
-                      // caller.
-                      new RetryHttpRequestInitializer(ImmutableList.of(404))))
-              .setRootUrl(options.getPubsubRootUrl())
-              .setApplicationName(options.getAppName())
-              .setGoogleClientRequestInitializer(options.getGoogleApiTrace())
-              .build();
+              new Builder(
+                      Transport.getTransport(),
+                      Transport.getJsonFactory(),
+                      chainHttpRequestInitializer(
+                              options.getGcpCredential(),
+                              // Do not log 404. It clutters the output and is possibly even required by the
+                              // caller.
+                              new RetryHttpRequestInitializer(ImmutableList.of(404))))
+                      .setRootUrl(options.getPubsubRootUrl())
+                      .setApplicationName(options.getAppName())
+                      .setGoogleClientRequestInitializer(options.getGoogleApiTrace())
+                      .build();
       return new PubsubJsonClient(timestampAttribute, idAttribute, pubsub);
     }
 
@@ -93,24 +100,34 @@ public class PubsubJsonClient extends PubsubClient {
     }
   }
 
-  /** Factory for creating Pubsub clients using Json transport. */
+  /**
+   * Factory for creating Pubsub clients using Json transport.
+   */
   public static final PubsubClientFactory FACTORY = new PubsubJsonClientFactory();
 
   /**
    * Attribute to use for custom timestamps, or {@literal null} if should use Pubsub publish time
    * instead.
    */
-  @Nullable private final String timestampAttribute;
+  @Nullable
+  private final String timestampAttribute;
 
-  /** Attribute to use for custom ids, or {@literal null} if should use Pubsub provided ids. */
-  @Nullable private final String idAttribute;
+  /**
+   * Attribute to use for custom ids, or {@literal null} if should use Pubsub provided ids.
+   */
+  @Nullable
+  private final String idAttribute;
 
-  /** Underlying JSON transport. */
+  /**
+   * Underlying JSON transport.
+   */
   private Pubsub pubsub;
+
+  private static final long TIMESTAMP_OF_20000101 = 946656000L;
 
   @VisibleForTesting
   PubsubJsonClient(
-      @Nullable String timestampAttribute, @Nullable String idAttribute, Pubsub pubsub) {
+          @Nullable String timestampAttribute, @Nullable String idAttribute, Pubsub pubsub) {
     this.timestampAttribute = timestampAttribute;
     this.idAttribute = idAttribute;
     this.pubsub = pubsub;
@@ -126,7 +143,7 @@ public class PubsubJsonClient extends PubsubClient {
     List<PubsubMessage> pubsubMessages = new ArrayList<>(outgoingMessages.size());
     for (OutgoingMessage outgoingMessage : outgoingMessages) {
       PubsubMessage pubsubMessage =
-          new PubsubMessage().encodeData(outgoingMessage.message().getData().toByteArray());
+              new PubsubMessage().encodeData(outgoingMessage.message().getData().toByteArray());
       pubsubMessage.setAttributes(getMessageAttributes(outgoingMessage));
       if (!outgoingMessage.message().getOrderingKey().isEmpty()) {
         pubsubMessage.put("orderingKey", outgoingMessage.message().getOrderingKey());
@@ -135,7 +152,7 @@ public class PubsubJsonClient extends PubsubClient {
     }
     PublishRequest request = new PublishRequest().setMessages(pubsubMessages);
     PublishResponse response =
-        pubsub.projects().topics().publish(topic.getPath(), request).execute();
+            pubsub.projects().topics().publish(topic.getPath(), request).execute();
     return response.getMessageIds().size();
   }
 
@@ -157,15 +174,15 @@ public class PubsubJsonClient extends PubsubClient {
 
   @Override
   public List<IncomingMessage> pull(
-      long requestTimeMsSinceEpoch,
-      SubscriptionPath subscription,
-      int batchSize,
-      boolean returnImmediately)
-      throws IOException {
+          long requestTimeMsSinceEpoch,
+          SubscriptionPath subscription,
+          int batchSize,
+          boolean returnImmediately)
+          throws IOException {
     PullRequest request =
-        new PullRequest().setReturnImmediately(returnImmediately).setMaxMessages(batchSize);
+            new PullRequest().setReturnImmediately(returnImmediately).setMaxMessages(batchSize);
     PullResponse response =
-        pubsub.projects().subscriptions().pull(subscription.getPath(), request).execute();
+            pubsub.projects().subscriptions().pull(subscription.getPath(), request).execute();
     if (response.getReceivedMessages() == null || response.getReceivedMessages().isEmpty()) {
       return ImmutableList.of();
     }
@@ -187,7 +204,7 @@ public class PubsubJsonClient extends PubsubClient {
 
       // Timestamp.
       long timestampMsSinceEpoch =
-          extractTimestamp(timestampAttribute, message.getMessage().getPublishTime(), attributes);
+              localExtractTimestamp(timestampAttribute, message.getMessage().getPublishTime(), attributes);
 
       // Ack id.
       String ackId = message.getAckId();
@@ -204,18 +221,18 @@ public class PubsubJsonClient extends PubsubClient {
       }
 
       com.google.pubsub.v1.PubsubMessage.Builder protoMessage =
-          com.google.pubsub.v1.PubsubMessage.newBuilder();
+              com.google.pubsub.v1.PubsubMessage.newBuilder();
       protoMessage.setData(ByteString.copyFrom(elementBytes));
       protoMessage.putAllAttributes(attributes);
       protoMessage.setOrderingKey(
-          (String) pubsubMessage.getUnknownKeys().getOrDefault("orderingKey", ""));
+              (String) pubsubMessage.getUnknownKeys().getOrDefault("orderingKey", ""));
       incomingMessages.add(
-          IncomingMessage.of(
-              protoMessage.build(),
-              timestampMsSinceEpoch,
-              requestTimeMsSinceEpoch,
-              ackId,
-              recordId));
+              IncomingMessage.of(
+                      protoMessage.build(),
+                      timestampMsSinceEpoch,
+                      requestTimeMsSinceEpoch,
+                      ackId,
+                      recordId));
     }
 
     return incomingMessages;
@@ -225,31 +242,31 @@ public class PubsubJsonClient extends PubsubClient {
   public void acknowledge(SubscriptionPath subscription, List<String> ackIds) throws IOException {
     AcknowledgeRequest request = new AcknowledgeRequest().setAckIds(ackIds);
     pubsub
-        .projects()
-        .subscriptions()
-        .acknowledge(subscription.getPath(), request)
-        .execute(); // ignore Empty result.
+            .projects()
+            .subscriptions()
+            .acknowledge(subscription.getPath(), request)
+            .execute(); // ignore Empty result.
   }
 
   @Override
   public void modifyAckDeadline(
-      SubscriptionPath subscription, List<String> ackIds, int deadlineSeconds) throws IOException {
+          SubscriptionPath subscription, List<String> ackIds, int deadlineSeconds) throws IOException {
     ModifyAckDeadlineRequest request =
-        new ModifyAckDeadlineRequest().setAckIds(ackIds).setAckDeadlineSeconds(deadlineSeconds);
+            new ModifyAckDeadlineRequest().setAckIds(ackIds).setAckDeadlineSeconds(deadlineSeconds);
     pubsub
-        .projects()
-        .subscriptions()
-        .modifyAckDeadline(subscription.getPath(), request)
-        .execute(); // ignore Empty result.
+            .projects()
+            .subscriptions()
+            .modifyAckDeadline(subscription.getPath(), request)
+            .execute(); // ignore Empty result.
   }
 
   @Override
   public void createTopic(TopicPath topic) throws IOException {
     pubsub
-        .projects()
-        .topics()
-        .create(topic.getPath(), new Topic())
-        .execute(); // ignore Topic result.
+            .projects()
+            .topics()
+            .create(topic.getPath(), new Topic())
+            .execute(); // ignore Topic result.
   }
 
   @Override
@@ -280,28 +297,28 @@ public class PubsubJsonClient extends PubsubClient {
 
   @Override
   public void createSubscription(
-      TopicPath topic, SubscriptionPath subscription, int ackDeadlineSeconds) throws IOException {
+          TopicPath topic, SubscriptionPath subscription, int ackDeadlineSeconds) throws IOException {
     Subscription request =
-        new Subscription().setTopic(topic.getPath()).setAckDeadlineSeconds(ackDeadlineSeconds);
+            new Subscription().setTopic(topic.getPath()).setAckDeadlineSeconds(ackDeadlineSeconds);
     pubsub
-        .projects()
-        .subscriptions()
-        .create(subscription.getPath(), request)
-        .execute(); // ignore Subscription result.
+            .projects()
+            .subscriptions()
+            .create(subscription.getPath(), request)
+            .execute(); // ignore Subscription result.
   }
 
   @Override
   public void deleteSubscription(SubscriptionPath subscription) throws IOException {
     pubsub
-        .projects()
-        .subscriptions()
-        .delete(subscription.getPath())
-        .execute(); // ignore Empty result.
+            .projects()
+            .subscriptions()
+            .delete(subscription.getPath())
+            .execute(); // ignore Empty result.
   }
 
   @Override
   public List<SubscriptionPath> listSubscriptions(ProjectPath project, TopicPath topic)
-      throws IOException {
+          throws IOException {
     Subscriptions.List request = pubsub.projects().subscriptions().list(project.getPath());
     ListSubscriptionsResponse response = request.execute();
     if (response.getSubscriptions() == null || response.getSubscriptions().isEmpty()) {
@@ -333,4 +350,73 @@ public class PubsubJsonClient extends PubsubClient {
   public boolean isEOF() {
     return false;
   }
+
+  private static long localExtractTimestamp(
+          @Nullable String timestampAttribute,
+          @Nullable String pubsubTimestamp,
+          @Nullable Map<String, String> attributes) {
+    Long timestampMsSinceEpoch;
+    if (Strings.isNullOrEmpty(timestampAttribute)) {
+      timestampMsSinceEpoch = localAsMsSinceEpoch(pubsubTimestamp);
+      checkArgument(
+              timestampMsSinceEpoch != null,
+              "Cannot interpret PubSub publish timestamp: %s",
+              pubsubTimestamp);
+    } else {
+      String value = attributes == null ? null : attributes.get(timestampAttribute);
+      if (value.length() > 13) {
+        value = StringUtils.substring(value, 0, 13);
+      }
+      checkArgument(
+              value != null,
+              "PubSub message is missing a value for timestamp attribute %s",
+              timestampAttribute);
+      timestampMsSinceEpoch = localAsMsSinceEpoch(value);
+      checkArgument(
+              timestampMsSinceEpoch != null,
+              "Cannot interpret value of attribute %s as timestamp: %s",
+              timestampAttribute,
+              value);
+    }
+    timestampMsSinceEpoch = updateDataEventTime(timestampMsSinceEpoch, localAsMsSinceEpoch(pubsubTimestamp));
+    return timestampMsSinceEpoch;
+  }
+
+  /**
+   * Return timestamp as ms-since-unix-epoch corresponding to {@code timestamp}. Return {@literal
+   * null} if no timestamp could be found. Throw {@link IllegalArgumentException} if timestamp
+   * cannot be recognized.
+   */
+  @Nullable
+  private static Long localAsMsSinceEpoch(@Nullable String timestamp) {
+    if (Strings.isNullOrEmpty(timestamp)) {
+      return null;
+    }
+    try {
+      // Try parsing as milliseconds since epoch. Note there is no way to parse a
+      // string in RFC 3339 format here.
+      // Expected IllegalArgumentException if parsing fails; we use that to fall back
+      // to RFC 3339.
+      return Long.parseLong(timestamp);
+    } catch (IllegalArgumentException e1) {
+      // Try parsing as RFC3339 string. DateTime.parseRfc3339 will throw an
+      // IllegalArgumentException if parsing fails, and the caller should handle.
+      return DateTime.parseRfc3339(timestamp).getValue();
+    }
+  }
+
+  /**
+   * 如果 事件时间  > pubsubTime 全部定义为延迟数据，下游会对延迟数据做处理
+   * @param eventTime
+   * @param pubsubTimestamp
+   * @return
+   */
+  private static long updateDataEventTime(long eventTime, long pubsubTimestamp) {
+    if (eventTime > pubsubTimestamp) {
+      log.info("event time older than publish time. ET:{}, PT:{}", eventTime, pubsubTimestamp);
+      return TIMESTAMP_OF_20000101;
+    }
+    return eventTime;
+  }
+
 }
